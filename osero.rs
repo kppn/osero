@@ -80,19 +80,33 @@ impl Board {
         (n_black, n_white)
     }
 
-    fn place(&mut self, x: usize, y: usize, piece: &Piece) -> Result<(), ()> {
+    fn place(&mut self, x: isize, y: isize, piece: &Piece) -> Result<(), ()> {
         if ! Self::_is_placable(&self.spaces, x, y, piece) {
             return Result::Err(());
         }
 
-        self.spaces[x][y] = *piece;
-        Self::_reverse(&mut self.spaces, x, y, piece);
+        let (xi, yi) = (x as usize, y as usize);
+
+        // ひっくり返せる場所を集める
+        let mut reverse_reserve = Vec::<(i32, i32)>::new();
+        Self::_select_reversable(&mut self.spaces, x, y, piece, &mut reverse_reserve);
+        // 無かったらやり直し
+        if reverse_reserve.len() == 0 {
+            self.spaces[xi][yi] = Piece::Blank;
+            return Result::Err(());
+        }
+        // あったらひっくり返し、置く
+        for (rx, ry) in reverse_reserve {
+            self.spaces[rx as usize][ry as usize] = *piece;
+        }
+        self.spaces[xi][yi] = *piece;
 
         Result::Ok(())
     }
 
-    fn _is_placable(spaces: &Vec<Vec<Piece>>, x: usize, y: usize, piece: &Piece) -> bool {
-        if ! spaces[x][y].is_blank() {
+    fn _is_placable(spaces: &Vec<Vec<Piece>>, x: isize, y: isize, piece: &Piece) -> bool {
+        let (xi, yi) = (x as usize, y as usize);
+        if ! spaces[xi][yi].is_blank() {
             return false;
         }
         if ! Self::_is_piece_around(spaces, x, y, piece) {
@@ -101,8 +115,9 @@ impl Board {
         true
     }
 
-    fn _is_blank(spaces: &Vec<Vec<Piece>>, x: usize, y: usize) -> bool {
-        if let Piece::Blank = spaces[x][y] {
+    fn _is_blank(spaces: &Vec<Vec<Piece>>, x: isize, y: isize) -> bool {
+        let (xi, yi) = (x as usize, y as usize);
+        if let Piece::Blank = spaces[xi][yi] {
             true
         }
         else {
@@ -110,7 +125,7 @@ impl Board {
         }
     }
 
-    fn _is_piece_around(spaces: &Vec<Vec<Piece>>, x: usize, y: usize, piece: &Piece) -> bool {
+    fn _is_piece_around(spaces: &Vec<Vec<Piece>>, x: isize, y: isize, piece: &Piece) -> bool {
         let x_range = Self::_around_range(x);
         let y_range = Self::_around_range(y);
 
@@ -119,7 +134,8 @@ impl Board {
                 if (x==cx) && (y==cy) {
                     continue;
                 }
-                if (!spaces[cx][cy].is_blank()) && *piece != spaces[cx][cy] {
+                let (xi, yi) = (cx as usize, cy as usize);
+                if (!spaces[xi][yi].is_blank()) && *piece != spaces[xi][yi] {
                     return true;
                 }
             }
@@ -127,42 +143,60 @@ impl Board {
         false
     }
 
-    fn _reverse(spaces: &mut Vec<Vec<Piece>>, x: usize, y: usize, piece: &Piece) {
-        let fwd = |n: usize| n + 1;
-        let bak = |n: usize| n.wrapping_sub(1);
-        let blk = |n: usize| n + 0;
-        Self::_reverse_recv(spaces, x+1,               y,                 &fwd, &blk, piece);
-        Self::_reverse_recv(spaces, x+1,               y+1,               &fwd, &fwd, piece);
-        Self::_reverse_recv(spaces, x,                 y+1,               &blk, &fwd, piece);
-        Self::_reverse_recv(spaces, x.wrapping_sub(1), y+1,               &bak, &fwd, piece);
-        Self::_reverse_recv(spaces, x.wrapping_sub(1), y,                 &bak, &blk, piece);
-        Self::_reverse_recv(spaces, x.wrapping_sub(1), y.wrapping_sub(1), &bak, &bak, piece);
-        Self::_reverse_recv(spaces, x,                 y.wrapping_sub(1), &blk, &bak, piece);
-        Self::_reverse_recv(spaces, x+1,               y.wrapping_sub(1), &fwd, &bak, piece);
+    fn _select_reversable(
+        spaces: &mut Vec<Vec<Piece>>, 
+        x: isize, y: isize, 
+        piece: &Piece, 
+        reverse_reserve: &mut Vec<(i32, i32)>
+    ) {
+        // 次に進む方向を示すクロージャ
+        let fwd = |n: isize| n + 1;
+        let bak = |n: isize| n - 1;
+        let nul = |n: isize| n + 0;
+        // 8方向を探索し、ひっくり返せる場所を探す
+        Self::_reverse_recv(spaces, fwd(x), nul(y), &fwd, &nul, piece, reverse_reserve);
+        Self::_reverse_recv(spaces, fwd(x), fwd(y), &fwd, &fwd, piece, reverse_reserve);
+        Self::_reverse_recv(spaces, nul(x), fwd(y), &nul, &fwd, piece, reverse_reserve);
+        Self::_reverse_recv(spaces, bak(x), fwd(y), &bak, &fwd, piece, reverse_reserve);
+        Self::_reverse_recv(spaces, bak(x), nul(y), &bak, &nul, piece, reverse_reserve);
+        Self::_reverse_recv(spaces, bak(x), bak(y), &bak, &bak, piece, reverse_reserve);
+        Self::_reverse_recv(spaces, nul(x), bak(y), &nul, &bak, piece, reverse_reserve);
+        Self::_reverse_recv(spaces, fwd(x), bak(y), &fwd, &bak, piece, reverse_reserve);
     }
 
-    fn _reverse_recv(spaces: &mut Vec<Vec<Piece>>, x: usize, y: usize, x_next: &dyn Fn(usize) -> usize, y_next: &dyn Fn(usize) -> usize, piece: &Piece) -> bool
+    fn _reverse_recv(
+        spaces: &mut Vec<Vec<Piece>>, 
+        x: isize, y: isize, 
+        x_next: &dyn Fn(isize) -> isize, 
+        y_next: &dyn Fn(isize) -> isize,
+        piece: &Piece,
+        reverse_reserve: &mut Vec<(i32, i32)>
+    ) -> bool
     {
-        if (x==8) || (y==8) || (x==usize::MAX) || (y==usize::MAX) {
-            return false;
-        }
-        if let Piece::Blank = spaces[x][y] {
+        if (x>=8) || (y>=8) || (x<0) || (y<0) {
             return false;
         }
 
-        if *piece == spaces[x][y] {
+        let (xi, yi) = (x as usize, y as usize);
+
+        if let Piece::Blank = spaces[xi][yi] {
+            return false;
+        }
+
+        if *piece == spaces[xi][yi] {
             return true;
         }
         else {
-            let do_reverse = Self::_reverse_recv(spaces, x_next(x), y_next(y), x_next, y_next, piece);
+            let do_reverse = Self::_reverse_recv(spaces, x_next(x), y_next(y), x_next, y_next, piece, reverse_reserve);
             if do_reverse {
-                spaces[x][y] = *piece;
+                reverse_reserve.push((xi as i32, yi as i32));
+                //spaces[xi][yi] = *piece;
             }
             do_reverse
         }
     }
 
-    fn _around_range(n: usize) -> std::ops::RangeInclusive<usize> {
+    fn _around_range(n: isize) -> std::ops::RangeInclusive<isize> {
         if n == 0 {
             0..=2
         }
@@ -197,10 +231,13 @@ fn main() {
             println!("x,yで入力して");
             continue;
         }
-
-        let x_y: Vec<usize> = input.trim().split(',').map(|s| s.parse::<usize>().unwrap()).collect();
+        let x_y: Vec<isize> = input.trim().split(',').map(|s| s.parse::<isize>().unwrap()).collect();
         let x = x_y[0];
         let y = x_y[1];
+        if (x<0) || (x>7) || (y<0) || (y>7) {
+            println!("0~7で入力して");
+            continue;
+        }
 
         if let Result::Ok(()) = board.place(x, y, &te) {
             if let Piece::Black = te {
