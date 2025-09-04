@@ -177,6 +177,7 @@ impl Board {
 }
 
 
+
 fn main() {
     println!("Wellcome Osero");
     println!("");
